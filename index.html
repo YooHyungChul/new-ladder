@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>사다리타기 (6명/1명 당첨)</title>
+
+  <!-- ✅ 카카오톡 공유/미리보기용(Open Graph) -->
+  <!-- 배포 후 아래 3가지는 반드시 '내가 배포한 주소'로 바꿔주세요. -->
+  <meta property="og:title" content="사다리타기 (6명/1명 당첨)" />
+  <meta property="og:description" content="카톡에서 열어서 바로 사다리타기!" />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://YOUR-SITE-URL.example" />
+  <meta property="og:image" content="https://YOUR-SITE-URL.example/og.png" />
+
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; margin: 18px; }
+    h2 { margin: 10px 0 8px; font-size: 20px; }
+    .row { display:flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+    input, button, select { padding: 10px 12px; font-size: 14px; }
+    button { cursor:pointer; border: 1px solid #ddd; border-radius: 10px; background: #fff; }
+    button:active { transform: translateY(1px); }
+    canvas { border: 1px solid #ddd; border-radius: 12px; width: 100%; height: auto; max-width: 720px; }
+    .hint { color:#555; margin: 10px 0 6px; font-size: 13px; }
+    .labels { display:flex; justify-content: space-between; max-width: 720px; }
+    .labels div { width: calc(100%/6); text-align: center; font-weight: 600; font-size: 13px; }
+    .bottom { margin-top: 6px; }
+    .pill { display:inline-block; padding:3px 10px; border:1px solid #ddd; border-radius: 999px; margin-left: 4px; font-size: 12px; }
+    .card { max-width: 760px; }
+    .small { font-size: 12px; color: #666; margin-top: 10px; line-height: 1.5; }
+    .warn { color:#b42318; }
+  </style>
+
+  <!-- ✅ 카카오 공유 버튼을 쓰려면 아래 SDK가 필요합니다 (HTTPS로 배포된 페이지에서만 정상 작동) -->
+  <script src="https://t1.kakaocdn.net/kakao_js_sdk/2.7.2/kakao.min.js"
+          integrity="sha384-0XugQmT6QeQXr4m2P9Eo1QdO6jF6lKZ+gTz6H4gG9m0QyK7oV5pQj4Hc3mXk0u3I"
+          crossorigin="anonymous"></script>
+</head>
+<body>
+  <div class="card">
+    <h2>사다리타기 (6명 / 1명 당첨)</h2>
+
+    <div class="row">
+      <button id="regen">사다리 다시 만들기</button>
+
+      <label>
+        출발 선택:
+        <select id="start">
+          <option value="0">1번</option>
+          <option value="1">2번</option>
+          <option value="2">3번</option>
+          <option value="3">4번</option>
+          <option value="4">5번</option>
+          <option value="5">6번</option>
+        </select>
+      </label>
+
+      <button id="go">내려가기(결과 보기)</button>
+      <span id="result" class="pill">결과: -</span>
+
+      <button id="share">카카오톡으로 공유</button>
+    </div>
+
+    <p class="hint">
+      규칙: 위에서 시작해서 아래로 내려가다가 가로줄을 만나면 옆으로 이동합니다.
+    </p>
+
+    <div class="labels" id="topLabels"></div>
+    <canvas id="c" width="720" height="520"></canvas>
+    <div class="labels bottom" id="bottomLabels"></div>
+
+    <div class="small">
+      ✅ <b>카카오톡에서 “실행”</b>하려면, 이 파일을 <b>온라인(HTTPS)</b>에 올린 뒤 그 <b>링크를 카톡으로 공유</b>해야 해요.<br/>
+      <span class="warn">※ 카카오톡은 PC에 있는 .html 파일을 직접 실행할 수 없어요.</span><br/>
+      빠른 배포: Netlify Drop / GitHub Pages 추천 (둘 다 무료)
+    </div>
+  </div>
+
+<script>
+(() => {
+  // =========================
+  // 1) 사다리 로직/그리기
+  // =========================
+  const N = 6;
+  const ROWS = 10;
+  const P = 60;
+  const TOP = 40;
+  const H = 420;
+  const W = 720;
+  const stepY = H / (ROWS - 1);
+  const stepX = (W - 2*P) / (N - 1);
+
+  const canvas = document.getElementById("c");
+  const ctx = canvas.getContext("2d");
+  const regenBtn = document.getElementById("regen");
+  const goBtn = document.getElementById("go");
+  const shareBtn = document.getElementById("share");
+  const startSel = document.getElementById("start");
+  const resultEl = document.getElementById("result");
+  const topLabels = document.getElementById("topLabels");
+  const bottomLabels = document.getElementById("bottomLabels");
+
+  const players = ["1번","2번","3번","4번","5번","6번"];
+  function renderLabels() {
+    topLabels.innerHTML = "";
+    bottomLabels.innerHTML = "";
+    players.forEach(t => {
+      const d1 = document.createElement("div"); d1.textContent = t;
+      const d2 = document.createElement("div"); d2.textContent = "-";
+      topLabels.appendChild(d1); bottomLabels.appendChild(d2);
+    });
+  }
+  renderLabels();
+
+  let links = [];
+  let winnerIndex = 5;
+
+  function rndInt(a,b){ return Math.floor(Math.random()*(b-a+1))+a; }
+
+  function generateLadder() {
+    winnerIndex = rndInt(0, N-1);
+    links = Array.from({length: ROWS}, () => new Set());
+
+    for (let r=0; r<ROWS; r++) {
+      for (let i=0; i<N-1; i++) {
+        const leftTaken = links[r].has(i-1);
+        const hereTaken = links[r].has(i);
+        if (leftTaken || hereTaken) continue;
+        if (Math.random() < 0.35) links[r].add(i);
+      }
+    }
+
+    draw();
+    resultEl.textContent = "결과: -";
+  }
+
+  function xOf(i){ return P + i*stepX; }
+  function yOf(r){ return TOP + r*stepY; }
+
+  function draw(pathPoints=[]) {
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = "#333";
+    for (let i=0; i<N; i++) {
+      ctx.beginPath();
+      ctx.moveTo(xOf(i), yOf(0));
+      ctx.lineTo(xOf(i), yOf(ROWS-1));
+      ctx.stroke();
+    }
+
+    ctx.lineWidth = 5;
+    ctx.strokeStyle = "#111";
+    for (let r=0; r<ROWS; r++) {
+      links[r].forEach(i => {
+        ctx.beginPath();
+        ctx.moveTo(xOf(i), yOf(r));
+        ctx.lineTo(xOf(i+1), yOf(r));
+        ctx.stroke();
+      });
+    }
+
+    [...bottomLabels.children].forEach((el, i) => {
+      el.textContent = (i === winnerIndex) ? "🎉당첨" : "꽝";
+    });
+
+    if (pathPoints.length) {
+      ctx.lineWidth = 6;
+      ctx.strokeStyle = "#e11";
+      ctx.beginPath();
+      ctx.moveTo(pathPoints[0].x, pathPoints[0].y);
+      for (const p of pathPoints) ctx.lineTo(p.x, p.y);
+      ctx.stroke();
+    }
+  }
+
+  function trace(startIdx) {
+    let col = startIdx;
+    const pts = [{x:xOf(col), y:yOf(0)}];
+
+    for (let r=0; r<ROWS; r++) {
+      if (links[r].has(col)) {
+        pts.push({x:xOf(col), y:yOf(r)});
+        pts.push({x:xOf(col+1), y:yOf(r)});
+        col = col + 1;
+      } else if (links[r].has(col-1)) {
+        pts.push({x:xOf(col), y:yOf(r)});
+        pts.push({x:xOf(col-1), y:yOf(r)});
+        col = col - 1;
+      }
+      pts.push({x:xOf(col), y:yOf(r+1 < ROWS ? r+1 : r)});
+    }
+    return { end: col, points: pts };
+  }
+
+  function animatePath(points) {
+    let i = 1;
+    function step() {
+      draw(points.slice(0, i));
+      i++;
+      if (i <= points.length) requestAnimationFrame(step);
+    }
+    step();
+  }
+
+  regenBtn.addEventListener("click", generateLadder);
+
+  goBtn.addEventListener("click", () => {
+    const startIdx = Number(startSel.value);
+    const { end, points } = trace(startIdx);
+    animatePath(points);
+    const win = (end === winnerIndex);
+    resultEl.textContent = `결과: ${win ? "🎉당첨!" : "꽝"} (도착: ${end+1}번)`;
+  });
+
+  generateLadder();
+
+  // =========================
+  // 2) 카카오톡 공유 (링크 공유)
+  // =========================
+  // ⚠️ 꼭 해야 하는 것:
+  // - 카카오 디벨로퍼스에서 JS 키 발급
+  // - 발급받은 키로 아래 초기화
+  // - 배포한 도메인을 '플랫폼 > Web'에 등록
+  const KAKAO_JS_KEY = "YOUR_KAKAO_JAVASCRIPT_KEY"; // ← 여기에 본인 키 넣기
+  const shareUrl = window.location.href;            // 배포된 페이지 주소(HTTPS)
+
+  function initKakao() {
+    if (!window.Kakao) return false;
+    if (!Kakao.isInitialized()) {
+      try {
+        Kakao.init(KAKAO_JS_KEY);
+      } catch (e) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  shareBtn.addEventListener("click", () => {
+    // 키를 아직 안 넣었다면, 일단 일반 "링크 복사"로 대체
+    if (KAKAO_JS_KEY.includes("YOUR_")) {
+      navigator.clipboard?.writeText(shareUrl).then(() => {
+        alert("카카오 키가 아직 없어서 링크만 복사했어요!\n카톡에 붙여넣기 하면 열 수 있어요.\n\n(카카오 공유 버튼을 쓰려면 JS 키를 넣어야 해요.)");
+      }).catch(() => {
+        prompt("이 링크를 복사해서 카톡에 붙여넣기 해줘:", shareUrl);
+      });
+      return;
+    }
+
+    if (!initKakao()) {
+      prompt("카카오 SDK 초기화에 실패했어요. 일단 링크를 공유해줘:", shareUrl);
+      return;
+    }
+
+    Kakao.Share.sendDefault({
+      objectType: "feed",
+      content: {
+        title: "사다리타기 (6명/1명 당첨)",
+        description: "카톡에서 열어서 바로 사다리타기!",
+        imageUrl: "https://YOUR-SITE-URL.example/og.png", // 배포 후 실제 이미지 URL로 교체
+        link: { mobileWebUrl: shareUrl, webUrl: shareUrl }
+      },
+      buttons: [
+        { title: "게임 열기", link: { mobileWebUrl: shareUrl, webUrl: shareUrl } }
+      ]
+    });
+  });
+})();
+</script>
+</body>
+</html>
